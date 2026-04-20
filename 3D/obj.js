@@ -1,82 +1,83 @@
 /**
  * Gemini programming隊 3D生成ユニット
- * ミッション：OBJファイル内での完全なパーツ分離（物理造形用）
+ * ミッション：扇型（252度）パーツの生成と断面の封鎖
  */
 const fs = require('fs');
 
-let vCount = 0; // 頂点の通し番号（これはOBJ全体で共有する必要がある）
+let vCount = 0;
 
-// --- 1. 各パーツを生成して文字列として返す関数 ---
+// --- 1. 各パーツの関数 ---
 
 function drawBottom(radius, height) {
-    return generateComponent(0, 0, 0, radius, height, 32, "Bottom_Disc");
+    // 角度を 252/360 に制限
+    return generateArcComponent(0, 0, 0, radius, height, 32, (252/360), "Bottom_Fan");
 }
 
 function drawMiddle(radius, height, bottomH) {
-    const yPos = (bottomH / 2) + (height / 2);
-    return generateComponent(0, yPos, 0, radius, height, 32, "Middle_Shaft");
+    // 真ん中は完全な円柱
+    return generateArcComponent(0, (bottomH/2 + height/2), 0, radius, height, 32, 1.0, "Middle_Shaft");
 }
 
 function drawTop(radius, height, bottomH, middleH) {
     const yPos = (bottomH / 2) + middleH + (height / 2);
-    return generateComponent(0, yPos, 0, radius, height, 32, "Top_Disc");
+    // 上も扇形
+    return generateArcComponent(0, yPos, 0, radius, height, 32, (252/360), "Top_Fan");
 }
 
-// --- 2. 頂点と面を「セット」で生成するコアロジック ---
-function generateComponent(x, y, z, r, h, segments, name) {
+// --- 2. 扇型・円柱生成コアロジック ---
+function generateArcComponent(x, y, z, r, h, segments, ratio, name) {
     let lines = [];
-    lines.push(`o ${name}`); // オブジェクト宣言
+    lines.push(`o ${name}`);
     
     const h2 = h / 2;
     const base = vCount;
+    const actualSegments = Math.floor(segments * ratio); // 描画する分割数
 
-    // このパーツ専用の頂点を出力
-    for (let i = 0; i < segments; i++) {
-        const rad = (i / segments) * Math.PI * 2;
+    // 頂点生成（円周部分）
+    for (let i = 0; i <= actualSegments; i++) {
+        const rad = (i / segments) * Math.PI * 2; // 全体360度に対する割合で計算
         const cx = Math.cos(rad) * r;
         const cz = Math.sin(rad) * r;
-        lines.push(`v ${(x + cx).toFixed(4)} ${(y - h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
-        lines.push(`v ${(x + cx).toFixed(4)} ${(y + h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
+        lines.push(`v ${(x + cx).toFixed(4)} ${(y - h2).toFixed(4)} ${(z + cz).toFixed(4)}`); // 底面
+        lines.push(`v ${(x + cx).toFixed(4)} ${(y + h2).toFixed(4)} ${(z + cz).toFixed(4)}`); // 上面
     }
+    
+    // 中心点の頂点（断面を塞ぐためと、上下の蓋のために必要）
+    const centerBase = base + (actualSegments + 1) * 2;
+    lines.push(`v ${x.toFixed(4)} ${(y - h2).toFixed(4)} ${z.toFixed(4)}`); // 底面中心
+    lines.push(`v ${x.toFixed(4)} ${(y + h2).toFixed(4)} ${z.toFixed(4)}`); // 上面中心
 
-    // このパーツ専用の面をすぐ下に出力
-    for (let i = 0; i < segments; i++) {
-        const n = (i + 1) % segments;
+    // 面生成（側面）
+    for (let i = 0; i < actualSegments; i++) {
         const v1 = base + i * 2 + 1; const v2 = base + i * 2 + 2;
-        const v3 = base + n * 2 + 2; const v4 = base + n * 2 + 1;
-        lines.push(`f ${v1} ${v2} ${v4}`);
-        lines.push(`f ${v2} ${v3} ${v4}`);
+        const v3 = base + (i + 1) * 2 + 2; const v4 = base + (i + 1) * 2 + 1;
+        lines.push(`f ${v1} ${v2} ${v3} ${v4}`);
         
-        // 上下の蓋
-        if (i > 0 && i < segments - 1) {
-            lines.push(`f ${base+1} ${base + i*2 + 1} ${base + (n*2) + 1}`);
-            lines.push(`f ${base+2} ${base + (n*2) + 2} ${base + i*2 + 2}`);
-        }
+        // 上下の蓋（扇の面）
+        lines.push(`f ${centerBase + 1} ${v4} ${v1}`); // 底面
+        lines.push(`f ${centerBase + 2} ${v2} ${v3}`); // 上面
     }
 
-    vCount += segments * 2; // 次のパーツのためにカウントを更新
+    // 断面を塞ぐ面（扇の切り口）
+    const firstV1 = base + 1; const firstV2 = base + 2;
+    const lastV1 = base + actualSegments * 2 + 1; const lastV2 = base + actualSegments * 2 + 2;
+    
+    lines.push(`f ${centerBase + 1} ${centerBase + 2} ${firstV2} ${firstV1}`); // 開始位置の断面
+    lines.push(`f ${centerBase + 1} ${lastV1} ${lastV2} ${centerBase + 2}`); // 終了位置の断面
+
+    vCount += (actualSegments + 1) * 2 + 2;
     return lines.join("\n");
 }
 
-// --- 3. メイン組み立て ---
-
-const bH = 1.0; // 下段高さ
-const mH = 5.0; // 中段高さ
-const tH = 1.0; // 上段高さ
-
-const bottomStr = drawBottom(10, bH);
-const middleStr = drawMiddle(7.5, mH, bH);
-const topStr = drawTop(10, tH, bH, mH);
-
-// 順番に連結（o -> v -> f のセットが3つ並ぶ）
+// --- 3. 組み立て ---
+const bH = 1.0; const mH = 5.0; const tH = 1.0;
 const finalOBJ = [
     "# Gemini programming Unit",
-    "# Made for A1 mini Physical Printing",
-    bottomStr,
-    middleStr,
-    topStr
+    "# 扇型造形ミッション (252度)",
+    drawBottom(10, bH),
+    drawMiddle(7.5, mH, bH),
+    drawTop(10, tH, bH, mH)
 ].join("\n");
 
-fs.writeFileSync('separated_cylinders.obj', finalOBJ);
-
-console.log("ミッション完了！ 構造が完全に分離された 'separated_cylinders.obj' を生成したぞ。");
+fs.writeFileSync('fan_cylinders.obj', finalOBJ);
+console.log("ミッション完了！ 252度の扇型パーツを含む 'fan_cylinders.obj' を生成したぞ。");
