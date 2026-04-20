@@ -1,65 +1,80 @@
 /**
  * Gemini programming隊 3D生成ユニット
- * ミッション：物理造形用・3段円柱（ヒンジ・軸構造）
+ * ミッション：関数分割によるパーツ生成（上・中・下）
  */
 const fs = require('fs');
 
-let vertices = [];
-let faces = [];
-let vCount = 0;
+let vCount = 0; // 全体の頂点カウント管理
 
-// 円柱を生成する関数 (x, y, z, 半径, 高さ, 分割数)
-function addCylinder(x, y, z, radius, height, segments, name) {
-    vertices.push(`o ${name}`);
-    const h2 = height / 2;
-    
-    // 頂点の生成（底面と上面）
-    for (let i = 0; i < segments; i++) {
-        const theta = (i / segments) * Math.PI * 2;
-        const cx = Math.cos(theta) * radius;
-        const cz = Math.sin(theta) * radius;
-        // 底面の円周
-        vertices.push(`v ${(x + cx).toFixed(4)} ${(y - h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
-        // 上面の円周
-        vertices.push(`v ${(x + cx).toFixed(4)} ${(y + h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
-    }
+// --- パーツ生成関数（部品工場） ---
 
-    const base = vCount;
-    for (let i = 0; i < segments; i++) {
-        const next = (i + 1) % segments;
-        const v1 = base + i * 2 + 1;
-        const v2 = base + i * 2 + 2;
-        const v3 = base + next * 2 + 2;
-        const v4 = base + next * 2 + 1;
-
-        // 側面
-        faces.push(`f ${v1} ${v2} ${v4}`);
-        faces.push(`f ${v2} ${v3} ${v4}`);
-        
-        // 底面と上面の蓋（扇形）
-        // ※中心点を作らず簡易的に繋いでいる
-        if (i > 0 && i < segments - 1) {
-            faces.push(`f ${base+1} ${base + i*2 + 1} ${base + (i+1)*2 + 1}`); // 底面
-            faces.push(`f ${base+2} ${base + (i+1)*2 + 2} ${base + i*2 + 2}`); // 上面
-        }
-    }
-    vCount += segments * 2;
+// 下の段を作る関数
+function drawBottom(radius, height) {
+    return generateCylinderData(0, 0, 0, radius, height, 32, "Large_Bottom");
 }
 
-// --- 実行：隊員の指定サイズで生成 ---
+// 真ん中の軸を作る関数
+function drawMiddle(radius, height, bottomHeight) {
+    const yPos = (bottomHeight / 2) + (height / 2);
+    return generateCylinderData(0, yPos, 0, radius, height, 32, "Small_Middle");
+}
 
-// 1. 下の大きい円柱 (高さ1, 半径10)
-addCylinder(0, 0, 0, 10, 1, 32, "Large_Bottom");
+// 上の段を作る関数
+function drawTop(radius, height, bottomHeight, middleHeight) {
+    const yPos = (bottomHeight / 2) + middleHeight + (height / 2);
+    return generateCylinderData(0, yPos, 0, radius, height, 32, "Large_Top");
+}
 
-// 2. 中の小さい円柱 (高さ5, 半径7.5)
-// 下の円柱の上に載せるため、Y座標を調整 (1/2 + 5/2 = 3.0)
-addCylinder(0, 3.0, 0, 7.5, 5, 32, "Small_Middle");
+// --- 共通の円柱計算ロジック（工作機械） ---
+function generateCylinderData(x, y, z, r, h, segments, name) {
+    let vData = [`o ${name}`, `g ${name}`];
+    let fData = [];
+    const h2 = h / 2;
+    const base = vCount;
 
-// 3. 上の大きい円柱 (高さ1, 半径10)
-// さらにその上に載せる (3.0 + 5/2 + 1/2 = 6.0)
-addCylinder(0, 6.0, 0, 10, 1, 32, "Large_Top");
+    // 頂点生成
+    for (let i = 0; i < segments; i++) {
+        const rad = (i / segments) * Math.PI * 2;
+        const cx = Math.cos(rad) * r;
+        const cz = Math.sin(rad) * r;
+        vData.push(`v ${(x + cx).toFixed(4)} ${(y - h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
+        vData.push(`v ${(x + cx).toFixed(4)} ${(y + h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
+    }
 
-const output = "# Gemini programming Unit\n# 3段円柱・物理造形モデル\n" + vertices.join("\n") + "\n" + faces.join("\n");
-fs.writeFileSync('cylinder_stack.obj', output);
+    // 面生成
+    for (let i = 0; i < segments; i++) {
+        const n = (i + 1) % segments;
+        const v1 = base + i * 2 + 1; const v2 = base + i * 2 + 2;
+        const v3 = base + n * 2 + 2; const v4 = base + n * 2 + 1;
+        fData.push(`f ${v1} ${v2} ${v4}`, `f ${v2} ${v3} ${v4}`);
+        
+        if (i > 0 && i < segments - 1) {
+            fData.push(`f ${base+1} ${base + i*2 + 1} ${base + (n*2) + 1}`);
+            fData.push(`f ${base+2} ${base + (n*2) + 2} ${base + i*2 + 2}`);
+        }
+    }
 
-console.log("ミッション完了！ 'cylinder_stack.obj' が生成されたぞ。");
+    vCount += segments * 2;
+    return { v: vData.join("\n"), f: fData.join("\n") };
+}
+
+// --- メイン組み立て工程 ---
+
+const bHeight = 1;
+const mHeight = 5;
+const tHeight = 1;
+
+const bottom = drawBottom(10, bHeight);
+const middle = drawMiddle(7.5, mHeight, bHeight);
+const top = drawTop(10, tHeight, bHeight, mHeight);
+
+// 全てを統合
+const finalOBJ = [
+    "# Gemini programming Unit",
+    bottom.v, middle.v, top.v,
+    bottom.f, middle.f, top.f
+].join("\n");
+
+fs.writeFileSync('modular_cylinders.obj', finalOBJ);
+
+console.log("ミッション完了！関数ごとに分かれた美しいコードでOBJを生成したぞ！");
