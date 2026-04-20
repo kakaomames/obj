@@ -1,85 +1,79 @@
 /**
  * Gemini programming隊 3D生成ユニット
- * ミッション：芯（軸）のある完全なネジ構造の生成
+ * ミッション：土台・芯・ネジ山の一体化ボルト生成
  */
 const fs = require('fs');
 
 let vCount = 0;
 
-// --- 1. ボルト（芯のあるネジ棒） ---
-function drawSolidBolt(radius, height, pitch) {
-    return generateSolidScrew(0, 0, 0, radius, height, pitch, "Solid_Bolt");
-}
-
-// --- 2. 芯と螺旋を同時に作るコアロジック ---
-function generateSolidScrew(x, y, z, r, h, pitch, name) {
-    let lines = [`o ${name}`];
+function drawCompleteBolt(baseR, baseH, coreR, coreH, pitch) {
+    let lines = [`o Integrated_Bolt`];
+    
+    // --- 1. 土台（大きい円柱）の頂点と面 ---
+    const baseBottomY = 0;
+    const baseTopY = baseH;
     const segments = 32;
-    const turns = h / pitch;
-    const totalSteps = Math.floor(segments * turns);
-    const base = vCount;
+    const baseStartV = vCount;
 
-    // 頂点生成
+    for (let i = 0; i < segments; i++) {
+        const rad = (i / segments) * Math.PI * 2;
+        const cx = Math.cos(rad) * baseR;
+        const cz = Math.sin(rad) * baseR;
+        lines.push(`v ${cx.toFixed(4)} ${baseBottomY.toFixed(4)} ${cz.toFixed(4)}`);
+        lines.push(`v ${cx.toFixed(4)} ${baseTopY.toFixed(4)} ${cz.toFixed(4)}`);
+    }
+    for (let i = 0; i < segments; i++) {
+        const n = (i + 1) % segments;
+        const v1 = baseStartV + i * 2 + 1; const v2 = baseStartV + i * 2 + 2;
+        const v3 = baseStartV + n * 2 + 2; const v4 = baseStartV + n * 2 + 1;
+        lines.push(`f ${v1} ${v2} ${v3} ${v4}`); // 側面
+    }
+    vCount += segments * 2;
+
+    // --- 2. 芯（小さく高い円柱）＋ ネジ山（ぐるぐる） ---
+    const threadStartV = vCount;
+    const turns = coreH / pitch;
+    const totalSteps = Math.floor(segments * turns);
+
     for (let i = 0; i <= totalSteps; i++) {
         const angle = (i / segments) * Math.PI * 2;
-        const currY = (i / totalSteps) * h;
+        const currY = baseTopY + (i / totalSteps) * coreH; // 土台の上から開始
         
-        // A: ネジの山（外側）の頂点
-        const radialOffset = (i % 2 === 0) ? 1.0 : 0.2; // 山の高さ
-        const ax = Math.cos(angle) * (r + radialOffset);
-        const az = Math.sin(angle) * (r + radialOffset);
-        lines.push(`v ${(x + ax).toFixed(4)} ${(y + currY).toFixed(4)} ${(z + az).toFixed(4)}`);
+        // 芯の頂点
+        const coreX = Math.cos(angle) * coreR;
+        const coreZ = Math.sin(angle) * coreR;
+        lines.push(`v ${coreX.toFixed(4)} ${currY.toFixed(4)} ${coreZ.toFixed(4)}`);
         
-        // B: ネジの芯（内側）の頂点
-        const bx = Math.cos(angle) * r;
-        const bz = Math.sin(angle) * r;
-        lines.push(`v ${(x + bx).toFixed(4)} ${(y + currY).toFixed(4)} ${(z + bz).toFixed(4)}`);
+        // ネジ山の頂点（外側に突き出す）
+        const threadR = coreR + ((i % 2 === 0) ? 1.5 : 0.2); // ギザギザの幅
+        const tx = Math.cos(angle) * threadR;
+        const tz = Math.sin(angle) * threadR;
+        lines.push(`v ${tx.toFixed(4)} ${currY.toFixed(4)} ${tz.toFixed(4)}`);
     }
 
-    // 面生成
     for (let i = 0; i < totalSteps; i++) {
-        const v1 = base + i * 2 + 1; // 今回の外
-        const v2 = base + i * 2 + 2; // 今回の内
-        const v3 = base + (i + 1) * 2 + 2; // 次の内
-        const v4 = base + (i + 1) * 2 + 1; // 次の外
+        const v_core = threadStartV + i * 2 + 1;
+        const v_thread = threadStartV + i * 2 + 2;
+        const v_core_next = threadStartV + (i + 1) * 2 + 1;
+        const v_thread_next = threadStartV + (i + 1) * 2 + 2;
 
-        // 1. ネジの山（螺旋の表面）
-        lines.push(`f ${v1} ${v2} ${v3} ${v4}`);
-
-        // 2. 芯の壁（内側の円柱の表面）
-        // 前のステップの内側頂点と、今のステップの内側頂点を繋いで「棒」にする
-        if (i > 0) {
-            const prevV2 = base + (i - 1) * 2 + 2;
-            lines.push(`f ${prevV2} ${v2} ${v3} ${base + i * 2 + 2}`); // 簡易的な芯の面
-        }
+        // ネジ山の面（芯から外側へ）
+        lines.push(`f ${v_core} ${v_thread} ${v_thread_next} ${v_core_next}`);
+        
+        // 芯の表面（縦の壁）
+        lines.push(`f ${v_core} ${v_core_next} ${threadStartV + (i+1)*2 + 1} ${v_core}`); 
+        // ※簡易的に芯の面を繋いで棒にする
     }
 
-    // 芯をさらに確実にするため、上下の蓋を追加
-    // (中心点を通る面を追加して、棒の中身を定義する)
-    const centerBottom = vCount + (totalSteps + 1) * 2 + 1;
-    const centerTop = vCount + (totalSteps + 1) * 2 + 2;
-    lines.push(`v ${x} ${y} ${z}`); // 底の中心
-    lines.push(`v ${x} ${(y + h).toFixed(4)} ${z}`); // 天の中心
-    
-    for (let i = 0; i < totalSteps; i++) {
-        const v_inner = base + i * 2 + 2;
-        const v_inner_next = base + (i + 1) * 2 + 2;
-        lines.push(`f ${centerBottom} ${v_inner_next} ${v_inner}`); // 底蓋
-        lines.push(`f ${centerTop} ${v_inner} ${v_inner_next}`); // 天蓋
-    }
-
-    vCount += (totalSteps + 1) * 2 + 2;
+    vCount += (totalSteps + 1) * 2;
     return lines.join("\n");
 }
 
-// --- 組み立て実行 ---
-const bolt = drawSolidBolt(5.0, 30.0, 4.0); // 半径5mm、高さ30mm、ピッチ4mm
+// --- 組み立て工程 ---
+// 土台半径10, 高さ5 / 芯半径4, 高さ40 / ネジピッチ5
+const boltModel = drawCompleteBolt(10, 5, 4, 40, 5);
 
-const finalOBJ = [
-    "# Gemini programming Unit",
-    "# 芯（中心軸）のある完全なネジモデル",
-    bolt
-].join("\n");
+const output = "# Gemini programming Unit\n" + boltModel;
+fs.writeFileSync('integrated_bolt.obj', output);
 
-fs.writeFileSync('solid_bolt.obj', finalOBJ);
-console.log("✅ ミッション成功！芯がしっかり通った 'solid_bolt.obj' を書き出したぞ！");
+console.log("✅ ミッション完了！土台・芯・ネジ山が一つになった 'integrated_bolt.obj' を生成したぞ！");
