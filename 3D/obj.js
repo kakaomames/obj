@@ -1,86 +1,80 @@
 /**
  * Gemini programming隊 3D生成ユニット
- * ミッション：滑らかなネジ山・完全閉鎖・自動連番出力
+ * ミッション：3D迷路の自動生成とOBJ出力
  */
 const fs = require('fs');
-const path = require('path');
 
 let vCount = 0;
 
-function drawUltimateBolt(baseR, baseH, coreR, coreH, threadR, pitch) {
-    let lines = [`o Integrated_Bolt_v2`];
-    const segments = 32;
-
-    // 1. 土台 (Base)
-    lines.push(generateCylinder(0, baseH / 2, 0, baseR, baseH, segments, "Base_Handle"));
-
-    // 2. 軸 (Core) - 土台の上から配置
-    lines.push(generateCylinder(0, baseH + (coreH / 2), 0, coreR, coreH, segments, "Core_Shaft"));
-
-    // 3. 滑らかなネジ山 (Thread)
-    lines.push(`o Screw_Thread_Smooth`);
-    const turns = coreH / pitch;
-    const totalSteps = Math.floor(segments * turns);
-    const threadBase = vCount;
-
-    for (let i = 0; i <= totalSteps; i++) {
-        const angle = (i / segments) * Math.PI * 2;
-        const yBase = baseH + (i / totalSteps) * coreH;
-        const cos = Math.cos(angle);
-        const sin = Math.sin(angle);
-        const thickness = 0.6; // ネジ山の厚み
-
-        // 断面の4頂点（芯側2つ、外側2つ）
-        lines.push(`v ${(cos * coreR).toFixed(4)} ${yBase.toFixed(4)} ${(sin * coreR).toFixed(4)}`); // 内下
-        lines.push(`v ${(cos * coreR).toFixed(4)} ${(yBase + thickness).toFixed(4)} ${(sin * coreR).toFixed(4)}`); // 内上
-        lines.push(`v ${(cos * threadR).toFixed(4)} ${yBase.toFixed(4)} ${(sin * threadR).toFixed(4)}`); // 外下
-        lines.push(`v ${(cos * threadR).toFixed(4)} ${(yBase + thickness).toFixed(4)} ${(sin * threadR).toFixed(4)}`); // 外上
+// --- 1. 迷路アルゴリズム（穴掘り法） ---
+function generateMazeData(width, height) {
+    let maze = Array.from({ length: height }, () => Array(width).fill(1)); // 1は壁、0は道
+    
+    function dig(x, y) {
+        maze[y][x] = 0;
+        const dirs = [[0, 2], [0, -2], [2, 0], [-2, 0]].sort(() => Math.random() - 0.5);
+        for (let [dx, dy] of dirs) {
+            let nx = x + dx, ny = y + dy;
+            if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && maze[ny][nx] === 1) {
+                maze[y + dy / 2][x + dx / 2] = 0;
+                dig(nx, ny);
+            }
+        }
     }
+    dig(1, 1);
+    return maze;
+}
 
-    for (let i = 0; i < totalSteps; i++) {
-        const b = threadBase + i * 4;
-        const n = b + 4; // 次のステップの頂点へ繋ぐ
+// --- 2. 立方体（壁）を生成する関数 ---
+function drawWall(x, y, z, size) {
+    let lines = [];
+    const s = size / 2;
+    const base = vCount;
+    
+    // 8つの頂点
+    const vertices = [
+        [x-s, y, z-s], [x+s, y, z-s], [x+s, y+size, z-s], [x-s, y+size, z-s],
+        [x-s, y, z+s], [x+s, y, z+s], [x+s, y+size, z+s], [x-s, y+size, z+s]
+    ];
+    vertices.forEach(v => lines.push(`v ${v[0].toFixed(4)} ${v[1].toFixed(4)} ${v[2].toFixed(4)}`));
 
-        // 面の構築（法線を外側に向ける順番）
-        lines.push(`f ${b+1} ${n+1} ${n+2} ${b+2}`); // 内壁
-        lines.push(`f ${b+3} ${b+4} ${n+4} ${n+3}`); // 外壁
-        lines.push(`f ${b+2} ${n+2} ${n+4} ${b+4}`); // 上スロープ
-        lines.push(`f ${b+1} ${b+3} ${n+3} ${n+1}`); // 底スロープ
-    }
-    vCount += (totalSteps + 1) * 4;
+    // 6つの面
+    lines.push(`f ${base+1} ${base+2} ${base+3} ${base+4}`); // 前
+    lines.push(`f ${base+5} ${base+6} ${base+7} ${base+8}`); // 後
+    lines.push(`f ${base+1} ${base+2} ${base+6} ${base+5}`); // 底
+    lines.push(`f ${base+3} ${base+4} ${base+8} ${base+7}`); // 天
+    lines.push(`f ${base+1} ${base+5} ${base+8} ${base+4}`); // 左
+    lines.push(`f ${base+2} ${base+6} ${base+7} ${base+3}`); // 右
 
+    vCount += 8;
     return lines.join("\n");
 }
 
-function generateCylinder(x, y, z, r, h, segments, name) {
-    let cLines = [`o ${name}`];
-    const h2 = h / 2;
-    const base = vCount;
-    for (let i = 0; i < segments; i++) {
-        const rad = (i / segments) * Math.PI * 2;
-        const cx = Math.cos(rad) * r;
-        const cz = Math.sin(rad) * r;
-        cLines.push(`v ${(x + cx).toFixed(4)} ${(y - h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
-        cLines.push(`v ${(x + cx).toFixed(4)} ${(y + h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
+// --- 3. メイン組み立て ---
+function createMazeModel(size) {
+    const maze = generateMazeData(size, size);
+    let mazeLines = [`o Maze_Walls`];
+    const wallSize = 2.0;
+
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            if (maze[y][x] === 1) {
+                // 壁がある場所に立方体を置く
+                mazeLines.push(drawWall(x * wallSize, 0, y * wallSize, wallSize));
+            }
+        }
     }
-    for (let i = 0; i < segments; i++) {
-        const next = (i + 1) % segments;
-        const v1 = base + i * 2 + 1; const v2 = base + i * 2 + 2;
-        const v3 = base + next * 2 + 2; const v4 = base + next * 2 + 1;
-        cLines.push(`f ${v1} ${v2} ${v3} ${v4}`);
-    }
-    vCount += segments * 2;
-    return cLines.join("\n");
+    return mazeLines.join("\n");
 }
 
+// バージョニング保存
 function saveWithVersion(baseName, content) {
     let version = 1;
     let fileName = `${baseName}-v${version}.obj`;
     while (fs.existsSync(fileName)) { version++; fileName = `${baseName}-v${version}.obj`; }
     fs.writeFileSync(fileName, content);
-    console.log(`✅ ${fileName} を生成！`);
+    console.log(`✅ 迷路生成完了： ${fileName}`);
 }
 
-// 実行
-const boltData = drawUltimateBolt(10, 5, 4, 40, 7, 5);
-saveWithVersion('perfect_bolt', boltData);
+const mazeContent = createMazeModel(15); // 15x15の迷路
+saveWithVersion('maze_system', mazeContent);
