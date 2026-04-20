@@ -1,6 +1,6 @@
 /**
  * Gemini programming隊 3D生成ユニット
- * ミッション：上下分離・開閉対応型宝箱の生成
+ * ミッション：物理造形用・3段円柱（ヒンジ・軸構造）
  */
 const fs = require('fs');
 
@@ -8,50 +8,58 @@ let vertices = [];
 let faces = [];
 let vCount = 0;
 
-// パーツ生成関数
-function addPart(x, y, z, sizeX, sizeY, sizeZ, name) {
-    const dX = sizeX / 2; const dY = sizeY / 2; const dZ = sizeZ / 2;
-    let vList = [
-        {x:-dX,y:-dY,z:-dZ}, {x:dX,y:-dY,z:-dZ}, {x:dX,y:dY,z:-dZ}, {x:-dX,y:dY,z:-dZ},
-        {x:-dX,y:-dY,z:dZ}, {x:dX,y:-dY,z:dZ}, {x:dX,y:dY,z:dZ}, {x:-dX,y:dY,z:dZ}
-    ];
+// 円柱を生成する関数 (x, y, z, 半径, 高さ, 分割数)
+function addCylinder(x, y, z, radius, height, segments, name) {
+    vertices.push(`o ${name}`);
+    const h2 = height / 2;
     
-    // パーツの区切りとしてOBJにコメントを入れる
-    vertices.push(`o ${name}`); 
-    
-    vList.forEach(v => {
-        vertices.push(`v ${(v.x + x).toFixed(4)} ${(v.y + y).toFixed(4)} ${(v.z + z).toFixed(4)}`);
-    });
-    const b = vCount;
-    faces.push(`f ${b+1} ${b+2} ${b+3} ${b+4}`, `f ${b+5} ${b+6} ${b+7} ${b+8}`,
-               `f ${b+1} ${b+2} ${b+6} ${b+5}`, `f ${b+2} ${b+3} ${b+7} ${b+6}`,
-               `f ${b+3} ${b+4} ${b+8} ${b+7}`, `f ${b+4} ${b+1} ${b+5} ${b+8}`);
-    vCount += 8;
+    // 頂点の生成（底面と上面）
+    for (let i = 0; i < segments; i++) {
+        const theta = (i / segments) * Math.PI * 2;
+        const cx = Math.cos(theta) * radius;
+        const cz = Math.sin(theta) * radius;
+        // 底面の円周
+        vertices.push(`v ${(x + cx).toFixed(4)} ${(y - h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
+        // 上面の円周
+        vertices.push(`v ${(x + cx).toFixed(4)} ${(y + h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
+    }
+
+    const base = vCount;
+    for (let i = 0; i < segments; i++) {
+        const next = (i + 1) % segments;
+        const v1 = base + i * 2 + 1;
+        const v2 = base + i * 2 + 2;
+        const v3 = base + next * 2 + 2;
+        const v4 = base + next * 2 + 1;
+
+        // 側面
+        faces.push(`f ${v1} ${v2} ${v4}`);
+        faces.push(`f ${v2} ${v3} ${v4}`);
+        
+        // 底面と上面の蓋（扇形）
+        // ※中心点を作らず簡易的に繋いでいる
+        if (i > 0 && i < segments - 1) {
+            faces.push(`f ${base+1} ${base + i*2 + 1} ${base + (i+1)*2 + 1}`); // 底面
+            faces.push(`f ${base+2} ${base + (i+1)*2 + 2} ${base + i*2 + 2}`); // 上面
+        }
+    }
+    vCount += segments * 2;
 }
 
-// --- 1. 下側ユニット (The Bottom) ---
-// メインの入れ物
-addPart(0, -0.4, 0, 2.0, 0.8, 1.2, "Bottom_Main");
-// 底の補強フレーム（左右）
-addPart(-1.0, -0.4, 0, 0.2, 0.9, 1.3, "Bottom_Frame_L");
-addPart(1.0, -0.4, 0, 0.2, 0.9, 1.3, "Bottom_Frame_R");
+// --- 実行：隊員の指定サイズで生成 ---
 
-// --- 2. 上側ユニット (The Lid / 蓋) ---
-// 蓋は Y=0.0 より上に配置して、完全に分離させる
-const lidY = 0.3; 
-// 蓋のメイン
-addPart(0, lidY + 0.2, 0, 2.0, 0.4, 1.2, "Lid_Main");
-// 蓋の盛り上がり（宝箱っぽさ）
-addPart(0, lidY + 0.45, 0, 1.6, 0.2, 1.0, "Lid_Top");
-// 蓋の補強フレーム（左右）
-addPart(-1.0, lidY + 0.25, 0, 0.2, 0.6, 1.3, "Lid_Frame_L");
-addPart(1.0, lidY + 0.25, 0, 0.2, 0.6, 1.3, "Lid_Frame_R");
+// 1. 下の大きい円柱 (高さ1, 半径10)
+addCylinder(0, 0, 0, 10, 1, 32, "Large_Bottom");
 
-// --- 3. 装飾パーツ ---
-// 正面のロック（下側に固定）
-addPart(0, 0.0, -0.65, 0.4, 0.3, 0.1, "Lock_Base");
+// 2. 中の小さい円柱 (高さ5, 半径7.5)
+// 下の円柱の上に載せるため、Y座標を調整 (1/2 + 5/2 = 3.0)
+addCylinder(0, 3.0, 0, 7.5, 5, 32, "Small_Middle");
 
-const output = "# Gemini programming Unit\n# 宝箱：上下分離モデル\n" + vertices.join("\n") + "\n" + faces.join("\n");
-fs.writeFileSync('openable_chest.obj', output);
+// 3. 上の大きい円柱 (高さ1, 半径10)
+// さらにその上に載せる (3.0 + 5/2 + 1/2 = 6.0)
+addCylinder(0, 6.0, 0, 10, 1, 32, "Large_Top");
 
-console.log("ミッション完了！ 'openable_chest.obj' を生成したぞ。");
+const output = "# Gemini programming Unit\n# 3段円柱・物理造形モデル\n" + vertices.join("\n") + "\n" + faces.join("\n");
+fs.writeFileSync('cylinder_stack.obj', output);
+
+console.log("ミッション完了！ 'cylinder_stack.obj' が生成されたぞ。");
