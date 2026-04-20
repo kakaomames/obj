@@ -1,87 +1,78 @@
 /**
  * Gemini programming隊 3D生成ユニット
- * ミッション：持ち手付き物理ネジセットの生成
+ * ミッション：極薄シェル（殻）構造のネジ・面のみ生成
  */
 const fs = require('fs');
 
 let vCount = 0;
 
-// --- 1. ボルト全体（頭 + ネジ部）を作る関数 ---
-function drawHandBolt(radius, height, pitch) {
-    let boltParts = [];
-    // 持ち手（六角形の頭）
-    boltParts.push(generateCylinder(0, -2, 0, radius * 2, 2, 6, "Bolt_Head"));
-    // ネジ本体
-    boltParts.push(generateScrew(0, 0, 0, radius, height, pitch, "Bolt_Thread"));
-    return boltParts.join("\n");
+// --- 1. 極薄ボルト（面のみ、中空） ---
+function drawThinBolt(radius, height, pitch) {
+    // 縦（height）を小さく、横（radius）を大きく設定
+    return generateHollowScrew(0, 0, 0, radius, height, pitch, "Thin_Screw_Surface");
 }
 
-// --- 2. ナット全体（ネジ穴 + 外枠）を作る関数 ---
-function drawHandNut(radius, height, pitch) {
-    const clearance = 0.3; // A1 mini用の隙間
-    let nutParts = [];
-    // ナットの外枠（六角形）
-    nutParts.push(generateCylinder(20, 0, 0, radius * 2.5, height, 6, "Nut_Outer"));
-    // 中のネジ穴（これまでのネジロジックを流用）
-    nutParts.push(generateScrew(20, 0, 0, radius + clearance, height, pitch, "Nut_Internal_Thread"));
-    return nutParts.join("\n");
+// --- 2. 極薄ナット（面のみ、外枠なし） ---
+function drawThinNut(radius, height, pitch) {
+    const clearance = 0.3;
+    return generateHollowScrew(radius * 2.5, 0, 0, radius + clearance, height, pitch, "Thin_Nut_Surface");
 }
 
-// --- 3. 汎用円柱生成（頭の部分に使用） ---
-function generateCylinder(x, y, z, r, h, segments, name) {
+// --- 3. 中空・表面特化ネジロジック ---
+function generateHollowScrew(x, y, z, r, h, pitch, name) {
     let lines = [`o ${name}`];
-    const h2 = h / 2;
-    const base = vCount;
-    for (let i = 0; i < segments; i++) {
-        const rad = (i / segments) * Math.PI * 2;
-        const cx = Math.cos(rad) * r;
-        const cz = Math.sin(rad) * r;
-        lines.push(`v ${(x + cx).toFixed(4)} ${(y - h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
-        lines.push(`v ${(x + cx).toFixed(4)} ${(y + h2).toFixed(4)} ${(z + cz).toFixed(4)}`);
-    }
-    for (let i = 0; i < segments; i++) {
-        const n = (i + 1) % segments;
-        const v1 = base + i * 2 + 1; const v2 = base + i * 2 + 2;
-        const v3 = base + n * 2 + 2; const v4 = base + n * 2 + 1;
-        lines.push(`f ${v1} ${v2} ${v4}`, `f ${v2} ${v3} ${v4}`);
-    }
-    vCount += segments * 2;
-    return lines.join("\n");
-}
-
-// --- 4. ネジ螺旋生成コアロジック ---
-function generateScrew(x, y, z, r, h, pitch, name) {
-    let lines = [`o ${name}`];
-    const segments = 24;
+    const segments = 32; // 面を滑らかにするために分割数をアップ
     const turns = h / pitch;
     const totalSteps = Math.floor(segments * turns);
     const base = vCount;
 
+    // 頂点の生成：表面の「線」だけを定義
     for (let i = 0; i <= totalSteps; i++) {
         const angle = (i / segments) * Math.PI * 2;
         const currY = (i / totalSteps) * h;
-        // ネジ山を三角形にするためのオフセット
-        const radialOffset = (i % 2 === 0) ? 0.8 : 0; 
         
-        lines.push(`v ${(x + Math.cos(angle) * (r + radialOffset)).toFixed(4)} ${(y + currY).toFixed(4)} ${(z + Math.sin(angle) * (r + radialOffset)).toFixed(4)}`);
+        // ギザギザの面を作るための2つの頂点（外側と内側）
+        // 縦（高さ）がない場合、ここを極限まで近づける
+        const radialOffset = (i % 2 === 0) ? 0.5 : 0; 
+        
+        const cx = Math.cos(angle) * (r + radialOffset);
+        const cz = Math.sin(angle) * (r + radialOffset);
+        
+        // 表面の皮を作るための頂点
+        lines.push(`v ${(x + cx).toFixed(4)} ${(y + currY).toFixed(4)} ${(z + cz).toFixed(4)}`);
         lines.push(`v ${(x + Math.cos(angle) * r).toFixed(4)} ${(y + currY).toFixed(4)} ${(z + Math.sin(angle) * r).toFixed(4)}`);
     }
 
+    // 面の生成：中心点へ繋がず、表面の「帯」だけを作る
     for (let i = 0; i < totalSteps; i++) {
-        const v1 = base + i * 2 + 1; const v2 = base + i * 2 + 2;
-        const v3 = base + (i + 1) * 2 + 2; const v4 = base + (i + 1) * 2 + 1;
-        lines.push(`f ${v1} ${v2} ${v4}`, `f ${v2} ${v3} ${v4}`);
+        const v1 = base + i * 2 + 1;
+        const v2 = base + i * 2 + 2;
+        const v3 = base + (i + 1) * 2 + 2;
+        const v4 = base + (i + 1) * 2 + 1;
+        
+        // 表面のポリゴンを張る
+        lines.push(`f ${v1} ${v2} ${v3} ${v4}`);
     }
 
     vCount += (totalSteps + 1) * 2;
     return lines.join("\n");
 }
 
-// --- 実行 ---
-const boltData = drawHandBolt(5, 20, 3);
-const nutData = drawHandNut(5, 10, 3);
+// --- 実行：縦がない（薄い）設定 ---
+const radius = 15.0; // 横は大きく（15mm）
+const height = 2.0;  // 縦は極薄（2mm）
+const pitch = 1.0;   // ピッチも細かく
 
-const finalOBJ = ["# Gemini programming Unit", boltData, nutData].join("\n");
-fs.writeFileSync('functional_screw.obj', finalOBJ);
+const thinBolt = drawThinBolt(radius, height, pitch);
+const thinNut = drawThinNut(radius, height, pitch);
 
-console.log("✅ ミッション完了！持ち手付きの 'functional_screw.obj' を書き出したぞ！");
+const finalOBJ = [
+    "# Gemini programming Unit",
+    "# 極薄・表面のみネジモデル",
+    thinBolt,
+    thinNut
+].join("\n");
+
+fs.writeFileSync('thin_surface_screw.obj', finalOBJ);
+
+console.log("✅ ミッション完了！ 'thin_surface_screw.obj' を書き出したぞ。");
